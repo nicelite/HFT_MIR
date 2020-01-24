@@ -2,7 +2,8 @@ from pyspark import SparkContext, SparkConf
 from pyspark.sql import SparkSession, Window
 from pyspark.sql import functions as f
 from time import strptime
-
+import pandas as pd
+import numpy as np
 
 def pre_processing(session, directory_path, write_path, stock_list):
 
@@ -37,6 +38,40 @@ def pre_processing(session, directory_path, write_path, stock_list):
             .to_csv(complete_write_path, index=False)
         # df_stock.write.csv(complete_write_path, header=True)
 
+
+def pre_processing_pandas(directory_path, write_path, stock_list):
+
+    df = pd.read_csv(directory_path + '/*.csv')
+    df = spark.read.csv(directory_path + '/*.csv', header=True)
+
+    df = df.select(['t_price', 't_dt_neg', 't_dtm_neg', 't_isin', 't_q_exchanged'])\
+        .withColumnRenamed('t_price', 'price')\
+        .withColumnRenamed('t_dt_neg', 'date')\
+        .withColumnRenamed('t_dtm_neg', 'time_micro')\
+        .withColumnRenamed('t_isin', 'stock')\
+        .withColumnRenamed('t_q_exchanged', 'volume')
+
+    df = df.withColumn('date', f.concat(f.col('date'), f.lit('.'), f.col('time_micro')))
+    df = df.withColumn('date', df['date'].cast('timestamp'))\
+        .drop('time_micro')
+
+    print('Storing on hdd ...')
+    for stock_name in stock_list:
+        print('Storing ' + stock_name[0] + ' on hdd ...')
+        df_stock = df.filter(df['stock'] == stock_name[1])
+
+        df_stock = df_stock.withColumn("id", f.monotonically_increasing_id())
+        my_window = Window.partitionBy(f.window('date', '1 days')).orderBy('id')
+
+        df_stock = df_stock.withColumn("prev_price", f.lag(df_stock['price']).over(my_window))
+        df_stock = df_stock.withColumn("diff",
+                                       f.when(f.isnull(df_stock['prev_price']), 0)
+                                       .otherwise(f.log(df_stock['price']/df_stock['prev_price'])))
+        df_stocks = df_stock.drop('pre_price')
+        complete_write_path = write_path + '/' + stock_name[0] + '.csv'
+        df_stock.toPandas()\
+            .to_csv(complete_write_path, index=False)
+        # df_stock.write.csv(complete_write_path, header=True)
 
 def process_stock(session, stock_path, write_path, model):
     df = spark.read.csv(stock_path, header=True)
@@ -101,3 +136,14 @@ if __name__ == '__main__':
                       stock_path=stock_path,
                       write_path='D:/HFT/stocks_' + model + '/' + stock[0] + '.csv',
                       model=model)
+
+df = pd.read_csv('Bnp Paribas.csv')
+df['date'] = pd.to_datetime(df['date'])
+df.sort_values(by='date', inplace=True)
+df['prev_price'] = df['price'].shift(1)
+clean_df = df[(df['prev_price'] != df['price'])]
+clean_df['prev_date'] = clean_df['date'].head(20).diff().dt.days
+clean_df['log_return'] = np.where(clean_df['prev_date'] > 0, 0, np.log(clean_df['price']/clean_df['prev_price']))
+clean_df['return'] = np.where(clean_df['prev_date'] > 0, 0, (clean_df['price'] - clean_df['prev_price'])/clean_df['prev_price'])
+# TODO: Need to take into account the volume
+clean_df[clean_df['log_return'] != 0].reset_index().drop(columns=['id', 'prev_price', 'prev_date', 'diff', 'stock']).to_csv('clean_data.csv')
