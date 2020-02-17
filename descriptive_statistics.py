@@ -12,7 +12,10 @@ df_small.set_index('date', inplace=True)
 
 # Correlograme
 plot_acf(df_small['log_return'])
-# TODO: corrzlogramme r, r^2
+# TODO: correlogramme r, r^2
+
+# Test stationarite (Dickey Fuller)
+# Test hhomosckedasticite
 
 # analyse residus par modèle ar
 
