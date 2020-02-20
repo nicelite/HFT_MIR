@@ -8,6 +8,34 @@ from keras.models import Sequential
 from keras.preprocessing.sequence import TimeseriesGenerator
 
 
+class Portfolio:
+    def __init__(self,
+                 stocks_names,
+                 stocks_paths,
+                 return_column,
+                 return_model_types,
+                 volatility_model_types):
+        self.stock_list = list()
+        for i in range(len(stocks_names)):
+            self.stock_list.append(Stock(stock_name=stocks_names[i],
+                                         data_path=stocks_paths[i],
+                                         return_column=return_column,
+                                         return_model_type=return_model_types[i],
+                                         volatility_model_type=volatility_model_types[i]))
+
+    def model_training(self):
+        for s in self.stock_list:
+            s.model.fit_model()
+
+    def training_summary(self):
+        for s in self.stock_list:
+            s.model.summary_fit()
+
+    #def strat_from_model(self):
+    #    for s in self.stock_list:
+    #
+
+
 class Stock:
     def __init__(self,
                  data_path='clean_data.csv',
@@ -72,35 +100,7 @@ class Stock:
         return self.test_return / self.model.heteroscedasticity
 
     def fit_model(self):
-        self.model.fit()
-
-
-class Portfolio:
-    def __init__(self,
-                 stocks_names,
-                 stocks_paths,
-                 return_column,
-                 return_model_types,
-                 volatility_model_types):
-        self.stock_list = list()
-        for i in range(len(stocks_names)):
-            self.stock_list.append(Stock(stock_name=stocks_names[i],
-                                         data_path=stocks_paths[i],
-                                         return_column=return_column,
-                                         return_model_type=return_model_types[i],
-                                         volatility_model_type=volatility_model_types[i]))
-
-    def model_training(self):
-        for s in self.stock_list:
-            s.model.fit_model()
-
-    def training_summary(self):
-        for s in self.stock_list:
-            s.model.summary_fit()
-
-    #def strat_from_model(self):
-    #    for s in self.stock_list:
-    #
+        self.model.fit_model()
 
 
 class StockModel:
@@ -298,12 +298,13 @@ class ReturnModel:
             self.fitted_model = self.model
 
             self.fitted_resids = pd.Series(self.fitted_model.predict(dataX).ravel()) - self.return_train
-            self.fitted_resids = self.fitted_resids.dropna().iloc[:self.stock_model.stock.index_validation]
 
             self.metrics['mse_train'] = self.fitted_resids.apply(lambda err: err ** 2).mean()
             self.metrics['mse_validation'] = mean_squared_error(
-                y_true=self.return_train.iloc[self.stock_model.stock.index_validation:],
+                y_true=self.return_train.iloc[self.stock_model.stock.index_validation+self.lags+1:],
                 y_pred=self.fitted_model.predict(dataX.iloc[self.stock_model.stock.index_validation:]).ravel())
+
+            self.fitted_resids = self.fitted_resids.dropna().iloc[:self.stock_model.stock.index_validation]
 
         # elif self.model_type == 'NN':
         #     self.generator = TimeseriesGenerator(data=self.return_train,
@@ -411,16 +412,26 @@ if __name__ == '__main__':
     pd.set_option('mode.chained_assignment', None)
     data_path = 'clean_data.csv'
     return_model_type = 'NN'
-    volatility_model_type = 'arch'
+    volatility_model_type = 'NN'
     return_column = 'log_return'
 
-    portfolio = Portfolio(stocks_names=['Bnp Paribas'],
-                          stocks_paths=[data_path],
-                          return_column=return_column,
-                          return_model_types=[return_model_type],
-                          volatility_model_types=[volatility_model_type])
+    stock = Stock(stock_name='Bnp Paribas',
+                  data_path=data_path,
+                  return_column=return_column,
+                  return_model_type=return_model_type,
+                  volatility_model_type=volatility_model_type)
 
-    portfolio.model_training()
+    stock.fit_model()
+
+    stock.model.summary_fit()
+
+    # portfolio = Portfolio(stocks_names=['Bnp Paribas'],
+    #                       stocks_paths=[data_path],
+    #                       return_column=return_column,
+    #                       return_model_types=[return_model_type],
+    #                       volatility_model_types=[volatility_model_type])
+    #
+    # portfolio.model_training()
 
     #model = arch.arch_model(y=df_small['log_return'], mean='AR', lags=2, vol='arch', p=5)
 
