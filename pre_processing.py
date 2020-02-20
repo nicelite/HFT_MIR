@@ -141,9 +141,9 @@ df = pd.read_csv('Bnp Paribas.csv')
 df['date'] = pd.to_datetime(df['date'])
 df.sort_values(by='date', inplace=True)
 df['prev_price'] = df['price'].shift(1)
-clean_df = df[(df['prev_price'] != df['price'])]
-clean_df['prev_date'] = clean_df['date'].head(20).diff().dt.days
-clean_df['log_return'] = np.where(clean_df['prev_date'] > 0, 0, np.log(clean_df['price']/clean_df['prev_price']))
-clean_df['return'] = np.where(clean_df['prev_date'] > 0, 0, (clean_df['price'] - clean_df['prev_price'])/clean_df['prev_price'])
+#df = df[(df['prev_price'] != df['price'])]
+df['prev_date'] = df['date'].diff().dt.days
+df['log_return'] = np.where(df['prev_date'] > 0, np.nan, np.log(df['price']/df['prev_price']))
+df['return'] = np.where(df['prev_date'] > 0, np.nan, (df['price'] - df['prev_price'])/df['prev_price'])
 # TODO: Need to take into account the volume
-clean_df[clean_df['log_return'] != 0].reset_index().drop(columns=['id', 'prev_price', 'prev_date', 'diff', 'stock']).to_csv('clean_data.csv')
+df.dropna().reset_index().drop(columns=['id', 'prev_price', 'prev_date', 'diff', 'stock']).to_csv('clean_data.csv')
