@@ -242,16 +242,6 @@ class ReturnModel:
             self.model.compile(loss="mse",
                                optimizer="adam")
 
-        elif self.model_type == 'oneRNN':
-            self.model_dict = {'layers': [10, 1]}
-            self.model = Sequential()
-            self.model.add(Dense(units=self.model_dict['layers'][0],
-                                 input_dim=1,
-                                 activation='sigmoid'))
-            self.model.add(Dense(units=self.model_dict['layers'][1]))
-            self.model.compile(loss="mse",
-                               optimizer="adam")
-
         elif self.model_type == 'RNN':
             self.model_dict = {'layers': [10, 1]}
             self.model = Sequential()
@@ -277,56 +267,26 @@ class ReturnModel:
             self.fitted_resids = pd.Series(self.model.resids(
                 params=self.fitted_model.params[:(self.model_dict['lags'] + 1)]))
 
-        elif self.model_type == 'oneRNN':
-            self.model.fit(self.return_train, self.return_train, validation_split=0.1)
-
-            self.fitted_model = self.model
-
-            self.fitted_resids = pd.Series(self.fitted_model.predict(self.return_train).ravel()) - self.return_train
-
-            self.metrics['mse_train'] = self.fitted_resids.iloc[:self.stock_model.stock.index_validation].apply(
-                lambda err: err ** 2).mean()
-            self.metrics['mse_validation'] = self.fitted_resids.iloc[self.stock_model.stock.index_validation:].apply(
-                lambda err: err ** 2).mean()
-
-            self.fitted_resids = self.fitted_resids.dropna().iloc[:self.stock_model.stock.index_validation]
-
         elif self.model_type == 'NN':
-            dataX, dataY = self.stock_model.stock.reshape_time_series(dataset=self.return_train,
-                                                                      look_back=self.lags)
-            self.model.fit(dataX, dataY)
+            self.generator = TimeseriesGenerator(data=self.return_train.ravel(),
+                                                 targets=self.return_train.ravel(),
+                                                 length=self.lags,
+                                                 batch_size=8,
+                                                 end_index=self.stock_model.stock.index_validation)
+            self.model.fit_generator(self.generator,
+                                     steps_per_epoch=1,
+                                     epochs=200,
+                                     verbose=0,
+                                     use_multiprocessing=False)
             self.fitted_model = self.model
 
-            self.fitted_resids = pd.Series(self.fitted_model.predict(dataX).ravel()) - self.return_train
-
-            self.metrics['mse_train'] = self.fitted_resids.apply(lambda err: err ** 2).mean()
-            self.metrics['mse_validation'] = mean_squared_error(
-                y_true=self.return_train.iloc[self.stock_model.stock.index_validation+self.lags+1:],
-                y_pred=self.fitted_model.predict(dataX.iloc[self.stock_model.stock.index_validation:]).ravel())
-
-            self.fitted_resids = self.fitted_resids.dropna().iloc[:self.stock_model.stock.index_validation]
-
-        # elif self.model_type == 'NN':
-        #     self.generator = TimeseriesGenerator(data=self.return_train,
-        #                                          targets=self.return_train,
-        #                                          length=self.lags,
-        #                                          batch_size=8,
-        #                                          end_index=self.stock_model.stock.index_validation)
-        #     self.model.fit_generator(self.generator,
-        #                              steps_per_epoch=1,
-        #                              epochs=200,
-        #                              verbose=0,
-        #                              use_multiprocessing=True)
-        #     self.fitted_model = self.model
-        #
-        #     self.fitted_resids = self.fitted_model.predict_generator(self.generator,
-        #                                                              verbose=0) - self.return_train.iloc[
-        #                                                                           :self.stock_model.stock.index_validation]
+            y_pred = self.fitted_model.predict_generator(self.generator, verbose=0)
+            self.fitted_resids = y_pred[:, 0] - self.return_train.iloc[self.lags:self.stock_model.stock.index_validation]
 
     def summary(self):
         self.fitted_model.summary()
-        print('MSE return (train): %.4f' % self.metrics['mse_train'])
-        print('MSE return (validation): %.4f' % self.metrics['mse_validation'])
+        #print('MSE return (train): %.4f' % self.metrics['mse_train'])
+        #print('MSE return (validation): %.4f' % self.metrics['mse_validation'])
 
 
 class VolatilityModel:
@@ -360,15 +320,14 @@ class VolatilityModel:
                                          **self.model_dict)
         elif self.model_type == 'NN':
             self.model_dict = {'layers': [10, 1],
-                               'p': 1}
+                               'p': 2}
             self.model = Sequential()
             self.model.add(Dense(units=self.model_dict['layers'][0],
                                  activation='sigmoid',
                                  input_dim=self.model_dict['p']))
-            #self.model.add(Dropout(0.2))
-            self.model.add(Dense(units=self.model_dict['layers'][1]))
-            #self.model.add(Dense(units=self.model_dict['layers'][1],
-            #                     activation='linear'))
+            self.model.add(Dropout(0.2))
+            self.model.add(Dense(units=self.model_dict['layers'][1],
+                                 activation='linear'))
             self.model.compile(loss="mse",
                                optimizer="adam")
 
@@ -380,31 +339,19 @@ class VolatilityModel:
                 lambda var: var ** 0.5)
 
         elif self.model_type == 'NN':
-            dataX, dataY = self.stock_model.stock.reshape_time_series(dataset=self.resids.apply(lambda resid: resid**2),
-                                                                      look_back=self.model_dict['p'])
-            self.model.fit(dataX, dataY)
+            self.generator = TimeseriesGenerator(data=self.resids.apply(lambda resid: resid**2).ravel(),
+                                                 targets=self.resids.apply(lambda resid: resid**2).ravel(),
+                                                 length=self.model_dict['p'],
+                                                 batch_size=8)
+            self.model.fit_generator(self.generator,
+                                     steps_per_epoch=1,
+                                     epochs=200,
+                                     verbose=0,
+                                     use_multiprocessing=False)
             self.fitted_model = self.model
 
-            self.fitted_conditional_volatility = pd.Series(self.fitted_model
-                                                           .predict(self.resids.apply(lambda resid: resid ** 2))
-                                                           .ravel()).dropna().apply(lambda var: var ** 0.5)
-
-        # elif self.model_type == 'NN':
-        #     self.generator = TimeseriesGenerator(data=self.resids.apply(lambda resid: resid**2),
-        #                                          targets=self.resids.apply(lambda resid: resid**2),
-        #                                          length=self.model_dict['p'],
-        #                                          batch_size=8,
-        #                                          end_index=self.stock_model.stock.index_validation)
-        #     self.model.fit_generator(self.generator,
-        #                              steps_per_epoch=1,
-        #                              epochs=200,
-        #                              verbose=0,
-        #                              use_multiprocessing=True)
-        #     self.fitted_model = self.model
-        #
-        #     self.fitted_conditional_volatility = self.fitted_model.predict_generator(self.generator,
-        #                                                                              verbose=0).apply(
-        #         lambda var: var ** 0.5)
+            y_pred = self.fitted_model.predict_generator(self.generator, verbose=0)
+            self.fitted_conditional_volatility = pd.Series(y_pred[:, 0]).apply(lambda var: var ** 0.5)
 
 
 if __name__ == '__main__':
