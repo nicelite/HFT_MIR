@@ -1,7 +1,7 @@
 import pandas as pd
 import arch
 import numpy as np
-from math import log, exp
+from math import log, exp, sqrt
 
 from sklearn.metrics import mean_squared_error
 from keras.layers.core import Dense, Activation, Dropout
@@ -212,7 +212,7 @@ class StockModel:
         imax = min(max(r_pred.index), max(r_true.index), max(vol_pred.index))
         for i in range(imin, imax+1):
             mu = r_pred.loc[i]
-            sigma = abs(vol_pred.loc[i])
+            sigma = sqrt(abs(vol_pred.loc[i]))
             accuracy.append(int((r_true.loc[i] > mu-quantile*sigma) & (r_true.loc[i] < mu+quantile*sigma)))
 
         return np.mean(accuracy)
