@@ -1,6 +1,7 @@
 import pandas as pd
 import arch
 import numpy as np
+from math import log, exp
 
 from sklearn.metrics import mean_squared_error
 from keras.layers.core import Dense, Activation, Dropout
@@ -16,15 +17,13 @@ class Portfolio:
                  stocks_names,
                  stocks_paths,
                  return_column,
-                 return_model_types,
-                 volatility_model_types):
+                 model_dicts):
         self.stock_list = list()
         for i in range(len(stocks_names)):
             self.stock_list.append(Stock(stock_name=stocks_names[i],
                                          data_path=stocks_paths[i],
                                          return_column=return_column,
-                                         return_model_type=return_model_types[i],
-                                         volatility_model_type=volatility_model_types[i]))
+                                         model_dict=model_dicts[i]))
 
     def model_training(self):
         for s in self.stock_list:
@@ -448,6 +447,7 @@ class VolatilityModel:
             self.index_validation = index_validation - self.resids.index[0]
 
         self.generator_train = None
+        self.generator_validation = None
         self.model = None
         self.fitted_model = None
 
@@ -492,11 +492,16 @@ class VolatilityModel:
                 lambda var: var ** 0.5)
 
         elif self.model_type == 'NN':
-            self.generator_train = TimeseriesGenerator(data=self.resids.apply(lambda resid: resid ** 2).values,
-                                                       targets=self.resids.apply(lambda resid: resid ** 2).values,
+            log_resids_sq = log(self.resids.apply(lambda resid: resid ** 2).values)
+            self.generator_train = TimeseriesGenerator(data=log_resids_sq,
+                                                       targets=log_resids_sq,
                                                        length=self.ar_lags,
                                                        batch_size=8,
                                                        end_index=self.index_validation)
+            self.generator_validation = TimeseriesGenerator(data=log_resids_sq,
+                                                            targets=log_resids_sq,
+                                                            length=self.ar_lags,
+                                                            start_index=self.index_validation)
             self.model.fit_generator(self.generator_train,
                                      steps_per_epoch=1,
                                      epochs=200,
@@ -505,7 +510,6 @@ class VolatilityModel:
             self.fitted_model = self.model
 
             y_pred = self.fitted_model.predict_generator(self.generator_train, verbose=0)
-            # TODO: Pour l'instant les prédictions de variances peuevent être négatives ....
             self.fitted_conditional_volatility = pd.Series(y_pred[:, 0]).apply(lambda var: abs(var) ** 0.5)
 
     def evaluate(self):
@@ -518,16 +522,13 @@ class VolatilityModel:
                 .volatility.dropna()
 
         elif self.model_type == 'NN':
-            self.vol_pred_train = pd.Series(self.fitted_model.predict_generator(self.generator_train)[:, 0],
+            self.vol_pred_train = pd.Series(exp(self.fitted_model.predict_generator(self.generator_train)[:, 0]),
                                             index=self.resids.index[self.ar_lags:self.index_validation])
 
-            validation_generator = TimeseriesGenerator(data=self.resids.ravel(),
-                                                       targets=self.resids.ravel(),
-                                                       length=self.ar_lags,
-                                                       start_index=self.index_validation)
-            self.vol_pred_validation = pd.Series(self.fitted_model.predict_generator(validation_generator)[:, 0],
-                                                 index=self.resids.index[
-                                                       self.index_validation + self.ar_lags + 1:])
+            self.vol_pred_validation = pd.Series(
+                exp(self.fitted_model.predict_generator(self.generator_validation)[:, 0]),
+                index=self.resids.index[
+                      self.index_validation + self.ar_lags + 1:])
 
     def get_prediction_train(self):
         return self.vol_pred_train
