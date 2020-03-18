@@ -102,6 +102,17 @@ class Stock:
     def fit_model(self):
         self.model.fit_model()
 
+    def set_model_attribute(self,
+                            model_type,
+                            attribute,
+                            value):
+        self.model.set_model_attribute(model_type=model_type,
+                                       attribute=attribute,
+                                       value=value)
+
+    def get_metrics(self):
+        return self.model.metrics_dict
+
 
 class StockModel:
     def __init__(self,
@@ -218,8 +229,14 @@ class StockModel:
         return np.mean(accuracy)
 
     def summary_fit(self):
-        self.return_model.summary()
+        self.return_model.fitted_model.summary()
         print(self.metrics_dict)
+
+    def set_model_attribute(self,
+                            model_type,
+                            attribute,
+                            value):
+        self.model_dict[model_type][attribute] = value
 
 
 class MixModel:
@@ -492,7 +509,7 @@ class VolatilityModel:
                 lambda var: var ** 0.5)
 
         elif self.model_type == 'NN':
-            log_resids_sq = log(self.resids.apply(lambda resid: resid ** 2).values)
+            log_resids_sq = np.log(self.resids.apply(lambda resid: resid ** 2).values)
             self.generator_train = TimeseriesGenerator(data=log_resids_sq,
                                                        targets=log_resids_sq,
                                                        length=self.ar_lags,
@@ -522,11 +539,11 @@ class VolatilityModel:
                 .volatility.dropna()
 
         elif self.model_type == 'NN':
-            self.vol_pred_train = pd.Series(exp(self.fitted_model.predict_generator(self.generator_train)[:, 0]),
+            self.vol_pred_train = pd.Series(np.exp(self.fitted_model.predict_generator(self.generator_train)[:, 0]),
                                             index=self.resids.index[self.ar_lags:self.index_validation])
 
             self.vol_pred_validation = pd.Series(
-                exp(self.fitted_model.predict_generator(self.generator_validation)[:, 0]),
+                np.exp(self.fitted_model.predict_generator(self.generator_validation)[:, 0]),
                 index=self.resids.index[
                       self.index_validation + self.ar_lags + 1:])
 
@@ -538,6 +555,27 @@ class VolatilityModel:
 
     def summary(self):
         self.fitted_model.summary()
+
+
+def find_opt_params(stock,
+                    model_type_to_change,
+                    attribute_to_change,
+                    value_list,
+                    write_path='grid_search_params.xlsx'):
+    test_dict = dict()
+    for value in value_list:
+        stock.set_model_attribute(model_type=model_type_to_change,
+                                  attribute=attribute_to_change,
+                                  value=value)
+        stock.fit_model()
+        stock.model.evaluate()
+        stock.model.homoskedasticity_test()
+        #stock.model.summary_fit()
+        test_dict[value] = stock.get_metrics()
+
+    metrics_list = list(test_dict[value_list[0]].keys())
+    df_dict = {metric: [test_dict[key][metric] for key in value_list] for metric in metrics_list}
+    pd.DataFrame.from_dict(df_dict).to_excel(write_path)
 
 
 if __name__ == '__main__':
@@ -565,13 +603,18 @@ if __name__ == '__main__':
                   return_column=return_column,
                   model_dict=model_dict)
 
-    stock.fit_model()
+    find_opt_params(stock=stock,
+                    model_type_to_change='volatility_model',
+                    attribute_to_change='ar_lags',
+                    value_list=range(1,11))
+    # stock.fit_model()
+    #
+    # stock.model.evaluate()
+    #
+    # stock.model.homoskedasticity_test()
+    #
+    # stock.model.summary_fit()
 
-    stock.model.evaluate()
-
-    stock.model.homoskedasticity_test()
-
-    stock.model.summary_fit()
 
     # portfolio = Portfolio(stocks_names=['Bnp Paribas'],
     #                       stocks_paths=[data_path],
