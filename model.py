@@ -70,9 +70,15 @@ class Stock:
 
     def normalisation(self):
         self.mean_train = self.training_return.mean()
+        #self.mean_train = 0
         self.std_train = self.training_return.std()
+        #self.std_train = 1
         self.training_return = (self.training_return - self.mean_train) / self.std_train
         self.test_return = (self.test_return - self.mean_train) / self.std_train
+
+    def remove_normalisation(self,
+                             series):
+        return series * self.std_train + self.mean_train
 
     def reshape_time_series(self,
                             dataset,
@@ -94,10 +100,16 @@ class Stock:
 
     def get_homoscedasticity_training_data(self):
         index_start = len(self.training_return) - len(self.model.heteroscedasticity)
-        return self.training_return.iloc[index_start:] / self.model.heteroscedasticity.values[:, 0]
+        hetero_values = self.model.heteroscedasticity.values
+        if len(hetero_values.shape) > 1:
+            hetero_values = hetero_values[:, 0]
+        return self.training_return.iloc[index_start:] / hetero_values
 
     def get_homoscedasticity_test_data(self):
-        return self.test_return / self.model.heteroscedasticity
+        hetero_values = self.model.heteroscedasticity.values
+        if len(hetero_values.shape) > 1:
+            hetero_values = hetero_values[:, 0]
+        return self.test_return / hetero_values
 
     def fit_model(self):
         self.model.fit_model()
@@ -187,12 +199,13 @@ class StockModel:
         # bp_test = het_breuschpagan(resid=self.return_model.fitted_resids,
         #                            exog_het=self.return_model.r_true_train)
         # print(bp_test)
+        training = self.stock.remove_normalisation(self.data_training)
+        self.metrics_dict['init_skewness'] = training.skew(axis=0)
+        self.metrics_dict['init_kurtosis'] = training.kurtosis(axis=0)
 
-        self.metrics_dict['init_skewness'] = self.data_training.skew(axis=0)
-        self.metrics_dict['init_kurtosis'] = self.data_training.kurtosis(axis=0)
-
-        self.metrics_dict['final_skewness'] = self.homoscedastic_return.skew(axis=0)
-        self.metrics_dict['final_kurtosis'] = self.homoscedastic_return.kurtosis(axis=0)
+        homo_training = self.stock.remove_normalisation(self.homoscedastic_return)
+        self.metrics_dict['final_skewness'] = homo_training.skew(axis=0)
+        self.metrics_dict['final_kurtosis'] = homo_training.kurtosis(axis=0)
 
     def evaluate(self):
         self.evaluate_return_model()
@@ -236,6 +249,7 @@ class StockModel:
 
     def summary_fit(self):
         self.return_model.summary()
+        self.volatility_model.summary()
         print(self.metrics_dict)
 
     def set_model_attribute(self,
@@ -294,7 +308,8 @@ class MixModel:
     def build_model(self):
         model_dict = {'mean': self.return_model_type,
                       'lags': self.ar_lags,
-                      'vol': self.volatility_model_type}
+                      'vol': self.volatility_model_type,
+                      'dist': 'ged'}
         if self.volatility_model_type == 'arch':
             model_dict['p'] = self.model_dict['volatility_model']['ar_lags']
         elif self.volatility_model_type == 'garch':
@@ -309,7 +324,7 @@ class MixModel:
                                            last_obs=self.stock_model.stock.index_validation)
 
     def summary(self):
-        self.fitted_model.summary()
+        print(self.fitted_model.summary())
 
     def get_return_pred_train(self):
         return self.r_pred_train
@@ -386,11 +401,17 @@ class ReturnModel:
 
     def build_model(self):
         if self.model_type == 'AR':
-            self.model_dict = {'mean': self.model_type,
-                               'lags': self.ar_lags}
-            self.model = arch.arch_model(y=self.return_train.ravel(),
-                                         rescale=False,
-                                         **self.model_dict)
+            self.model = arch.univariate.ARX(y=self.return_train.ravel(),
+                                             lags=self.ar_lags,
+                                             constant=False,
+                                             rescale=False)
+            # model_dict = {'mean': self.model_type,
+            #               'vol': 'constant',
+            #               'lags': self.ar_lags,
+            #               'dist': 'ged'}
+            # self.model = arch.arch_model(y=self.return_train.ravel(),
+            #                              rescale=False,
+            #                              **model_dict)
 
         elif self.model_type == 'NN':
             self.model_dict = {'layers': [10, 1]}
@@ -426,7 +447,7 @@ class ReturnModel:
                                                last_obs=self.index_validation)
 
             self.fitted_resids = pd.Series(self.model.resids(
-                params=self.fitted_model.params[:(self.ar_lags + 1)]))
+                params=self.fitted_model.params[:self.ar_lags]))
 
         elif self.model_type == 'NN':
             self.generator_train = TimeseriesGenerator(data=self.return_train.ravel(),
@@ -479,7 +500,7 @@ class ReturnModel:
         return self.r_pred_validation
 
     def summary(self):
-        self.fitted_model.summary()
+        print(self.fitted_model.summary())
 
     def set_return_train(self,
                          S):
@@ -534,7 +555,8 @@ class VolatilityModel:
     def build_model(self):
         if self.model_type in ['arch', 'garch']:
             model_dict = {'mean': 'zero',
-                          'vol': self.model_type}
+                          'vol': self.model_type,
+                          'dist': 'ged'}
             if self.model_type == 'arch':
                 model_dict['p'] = self.ar_lags
             elif self.model_type == 'garch':
@@ -566,6 +588,8 @@ class VolatilityModel:
 
         elif self.model_type == 'NN':
             log_resids_sq = np.log(self.resids.apply(lambda resid: resid ** 2).values)
+            if len(log_resids_sq.shape) > 1:
+                log_resids_sq = log_resids_sq[:, 0]
             self.generator_train = TimeseriesGenerator(data=log_resids_sq,
                                                        targets=log_resids_sq,
                                                        length=self.ar_lags,
@@ -582,7 +606,7 @@ class VolatilityModel:
                                      use_multiprocessing=False)
             self.fitted_model = self.model
 
-            y_pred = self.fitted_model.predict_generator(self.generator_train, verbose=0)
+            y_pred = np.exp(self.fitted_model.predict_generator(self.generator_train, verbose=0))
             self.fitted_conditional_volatility = pd.Series(y_pred[:, 0]).apply(lambda var: abs(var) ** 0.5)
 
     def evaluate(self):
@@ -611,7 +635,7 @@ class VolatilityModel:
         return self.vol_pred_validation
 
     def summary(self):
-        self.fitted_model.summary()
+        print(self.fitted_model.summary())
 
 
 def find_opt_params(stock,
@@ -649,8 +673,8 @@ if __name__ == '__main__':
             'layers': [10, 1]
         },
         'volatility_model': {
-            'type': 'arch',
-            'ar_lags': 3,
+            'type': 'NN',
+            'ar_lags': 1,
             'ma_lags': 5,
             'layers': [10, 1]
         }
