@@ -196,9 +196,6 @@ class StockModel:
             self.volatility_model.fit()
 
     def homoskedasticity_test(self):
-        # bp_test = het_breuschpagan(resid=self.return_model.fitted_resids,
-        #                            exog_het=self.return_model.r_true_train)
-        # print(bp_test)
         training = self.stock.remove_normalisation(self.data_training)
         self.metrics_dict['init_skewness'] = training.skew(axis=0)
         self.metrics_dict['init_kurtosis'] = training.kurtosis(axis=0)
@@ -403,15 +400,8 @@ class ReturnModel:
         if self.model_type == 'AR':
             self.model = arch.univariate.ARX(y=self.return_train.ravel(),
                                              lags=self.ar_lags,
-                                             constant=False,
+                                             constant=self.model_dict['constant'],
                                              rescale=False)
-            # model_dict = {'mean': self.model_type,
-            #               'vol': 'constant',
-            #               'lags': self.ar_lags,
-            #               'dist': 'ged'}
-            # self.model = arch.arch_model(y=self.return_train.ravel(),
-            #                              rescale=False,
-            #                              **model_dict)
 
         elif self.model_type == 'NN':
             self.model_dict = {'layers': [10, 1]}
@@ -445,9 +435,9 @@ class ReturnModel:
         if self.model_type == 'AR':
             self.fitted_model = self.model.fit(update_freq=5,
                                                last_obs=self.index_validation)
-
+            params_index = self.ar_lags + int(self.model_dict['constant'])
             self.fitted_resids = pd.Series(self.model.resids(
-                params=self.fitted_model.params[:self.ar_lags]))
+                params=self.fitted_model.params[:params_index]))
 
         elif self.model_type == 'NN':
             self.generator_train = TimeseriesGenerator(data=self.return_train.ravel(),
@@ -651,7 +641,6 @@ def find_opt_params(stock,
         stock.fit_model()
         stock.model.evaluate()
         stock.model.homoskedasticity_test()
-        #stock.model.summary_fit()
         test_dict[value] = stock.get_metrics()
         stock.reset_metrics()
 
@@ -667,14 +656,16 @@ if __name__ == '__main__':
 
     model_dict = {
         'return_model': {
-            'type': 'AR',
+            'type': 'NN',
+            'constant': True,
             'ar_lags': 1,
             'ma_lags': 5,
             'layers': [10, 1]
         },
         'volatility_model': {
             'type': 'NN',
-            'ar_lags': 1,
+            'constant': True,
+            'ar_lags': 6,
             'ma_lags': 5,
             'layers': [10, 1]
         }
@@ -684,7 +675,7 @@ if __name__ == '__main__':
                   data_path=data_path,
                   return_column=return_column,
                   model_dict=model_dict)
-    #
+
     # find_opt_params(stock=stock,
     #                 model_type_to_change='volatility_model',
     #                 attribute_to_change='ar_lags',
