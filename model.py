@@ -4,7 +4,8 @@ import numpy as np
 from math import log, exp, sqrt
 
 from sklearn.metrics import mean_squared_error
-from keras.layers.core import Dense, Activation, Dropout
+from keras.layers import Input
+from keras.layers.core import Dense, Activation, Dropout, Reshape, InputSpec
 from keras.layers.recurrent import LSTM, SimpleRNN
 from keras.models import Sequential
 from keras.preprocessing.sequence import TimeseriesGenerator
@@ -98,6 +99,12 @@ class Stock:
     def get_test_data(self):
         return self.test_return
 
+    def get_homoscedasticity_endo_feature(self):
+        hetero_values = self.model.heteroscedasticity.values
+        if len(hetero_values.shape) > 1:
+            hetero_values = hetero_values[:, 0]
+        return
+
     def get_homoscedasticity_training_data(self):
         index_start = len(self.training_return) - len(self.model.heteroscedasticity)
         hetero_values = self.model.heteroscedasticity.values
@@ -175,13 +182,18 @@ class StockModel:
             volatility_model.build_model()
             volatility_model.fit()
 
+            self.evaluate(return_model=return_model,
+                          volatility_model=volatility_model,
+                          evaluate_validation=False)
+
             self.heteroscedasticity = volatility_model.fitted_conditional_volatility
             self.homoscedastic_return = self.stock.get_homoscedasticity_training_data()
 
             self.return_model = ReturnModel(stock_model=self,
                                             model_dict=self.model_dict['return_model'],
                                             return_train=self.homoscedastic_return,
-                                            index_validation=self.stock.index_validation)
+                                            index_validation=self.stock.index_validation,
+                                            endogenous_feature=self.stock.get_homoscedasticity_endo_feature())
             self.return_model.build_model()
             self.return_model.fit()
 
@@ -204,45 +216,59 @@ class StockModel:
         self.metrics_dict['final_skewness'] = homo_training.skew(axis=0)
         self.metrics_dict['final_kurtosis'] = homo_training.kurtosis(axis=0)
 
-    def evaluate(self):
-        self.evaluate_return_model()
-        self.metrics_dict['mse_train'] = self.mse(r_pred=self.return_model.get_return_pred_train(),
-                                                  r_true=self.return_model.r_true_train)
-        self.metrics_dict['mse_validation'] = self.mse(r_pred=self.return_model.get_return_pred_validation(),
-                                                       r_true=self.return_model.r_true_validation)
+    def evaluate(self,
+                 return_model=None,
+                 volatility_model=None,
+                 evaluate_validation=True):
+        lab=''
+        if return_model is None or volatility_model is None:
+            return_model = self.return_model
+            volatility_model = self.volatility_model
+            lab = '_final'
+        self.evaluate_return_model(model=return_model,
+                                   evaluate_validation=evaluate_validation)
+        self.metrics_dict['mse_train' + lab] = self.mse(r_pred=return_model.get_return_pred_train(),
+                                                        r_true=return_model.r_true_train)
+        self.metrics_dict['mse_validation' + lab] = self.mse(r_pred=return_model.get_return_pred_validation(),
+                                                             r_true=return_model.r_true_validation)
 
-        self.evaluate_volatility_model()
-        self.metrics_dict['accuracy_train'] = self.accuracy(r_pred=self.return_model.get_return_pred_train(),
-                                                            r_true=self.return_model.r_true_train,
-                                                            vol_pred=self.volatility_model.get_volatility_pred_train())
+        self.evaluate_volatility_model(model=volatility_model,
+                                       evaluate_validation=evaluate_validation)
+        self.metrics_dict['accuracy_train' + lab] = self.accuracy(r_pred=return_model.get_return_pred_train(),
+                                                                  r_true=return_model.r_true_train,
+                                                                  vol_pred=volatility_model.get_volatility_pred_train())
 
-        self.metrics_dict['accuracy_validation'] = self.accuracy(r_pred=self.return_model.get_return_pred_validation(),
-                                                                 r_true=self.return_model.r_true_validation,
-                                                                 vol_pred=self.volatility_model
-                                                                 .get_volatility_pred_validation())
+        self.metrics_dict['accuracy_validation' + lab] = self.accuracy(r_pred=return_model.get_return_pred_validation(),
+                                                                       r_true=return_model.r_true_validation,
+                                                                       vol_pred=volatility_model
+                                                                       .get_volatility_pred_validation())
 
     @staticmethod
     def mse(r_pred,
             r_true):
-        merged_df = pd.DataFrame(r_pred).merge(right=r_true, left_index=True, right_index=True, how='inner')
-        columns = merged_df.columns
-        return mean_squared_error(y_true=merged_df[columns[0]],
-                                  y_pred=merged_df[columns[1]])
+        if r_pred is not None and r_true is not None:
+            merged_df = pd.DataFrame(r_pred).merge(right=r_true, left_index=True, right_index=True, how='inner')
+            columns = merged_df.columns
+            return mean_squared_error(y_true=merged_df[columns[0]],
+                                      y_pred=merged_df[columns[1]])
+        return None
 
     @staticmethod
     def accuracy(r_pred,
                  r_true,
                  vol_pred,
                  quantile=1.96):
-        accuracy = []
-        imin = max(min(r_pred.index), min(r_true.index), min(vol_pred.index))
-        imax = min(max(r_pred.index), max(r_true.index), max(vol_pred.index))
-        for i in range(imin, imax+1):
-            mu = r_pred.loc[i]
-            sigma = sqrt(abs(vol_pred.loc[i]))
-            accuracy.append(int((r_true.loc[i] > mu-quantile*sigma) & (r_true.loc[i] < mu+quantile*sigma)))
+        if r_pred is not None and r_true is not None and vol_pred is not None:
+            accuracy = []
+            imin = max(min(r_pred.index), min(r_true.index), min(vol_pred.index))
+            imax = min(max(r_pred.index), max(r_true.index), max(vol_pred.index))
+            for i in range(imin, imax+1):
+                mu = r_pred.loc[i]
+                sigma = sqrt(abs(vol_pred.loc[i]))
+                accuracy.append(int((r_true.loc[i] > mu-quantile*sigma) & (r_true.loc[i] < mu+quantile*sigma)))
 
-        return np.mean(accuracy)
+            return np.mean(accuracy)
+        return None
 
     def summary_fit(self):
         self.return_model.summary()
@@ -259,19 +285,21 @@ class StockModel:
         self.metrics_dict = dict()
 
     def evaluate_return_model(self,
-                              model=None):
+                              model=None,
+                              evaluate_validation=True):
         if model is None:
             model = self.return_model
-        model.evaluate()
+        model.evaluate(evaluate_validation=evaluate_validation)
 
     def evaluate_volatility_model(self,
-                                  model=None):
+                                  model=None,
+                                  evaluate_validation=True):
         if self.return_model_type == 'AR' and self.volatility_model_type in ['arch', 'garch']:
             pass
         else:
             if model is None:
                 model = self.volatility_model
-            model.evaluate()
+            model.evaluate(evaluate_validation=evaluate_validation)
 
 
 class MixModel:
@@ -288,7 +316,7 @@ class MixModel:
         self.model = None
         self.model_dict = model_dict
         self.ar_lags = model_dict['return_model']['ar_lags']
-        self.overwrite_params = None
+        self.overwrite_params = self.model_dict['return_model']['params']
 
         self.fitted_model = None
         self.fitted_resids = None
@@ -363,13 +391,18 @@ class MixModel:
         self.build_model()
         self.fit()
 
+    def set_params(self,
+                   params):
+        self.overwrite_params = params
+
 
 class ReturnModel:
     def __init__(self,
                  stock_model,
                  model_dict,
                  return_train,
-                 index_validation=None):
+                 index_validation=None,
+                 endogenous_feature=None):
 
         self.stock_model = stock_model
         self.model_dict = model_dict
@@ -381,6 +414,7 @@ class ReturnModel:
             self.index_validation = index_validation - self.return_train.index[0]
 
         self.generator_train = None
+        self.generator_validation = None
         self.model = None
         self.ar_lags = self.model_dict['ar_lags']
         self.ma_lags = self.model_dict['ma_lags']
@@ -389,7 +423,8 @@ class ReturnModel:
         self.fitted_resids = None
         self.all_resids = None
 
-        self.overwrite_params = None
+        self.overwrite_params = self.model_dict['params']
+        self.endogenous_feature = endogenous_feature
 
         self.r_pred_train = None
         self.r_pred_validation = None
@@ -398,10 +433,17 @@ class ReturnModel:
 
     def build_model(self):
         if self.model_type == 'AR':
-            self.model = arch.univariate.ARX(y=self.return_train.ravel(),
-                                             lags=self.ar_lags,
-                                             constant=self.model_dict['constant'],
-                                             rescale=False)
+            if self.endogenous_feature is None:
+                self.model = arch.univariate.ARX(y=self.return_train.ravel(),
+                                                 lags=self.ar_lags,
+                                                 constant=self.model_dict['constant'],
+                                                 rescale=False)
+            else:
+                self.model = arch.univariate.ARX(y=self.return_train.ravel(),
+                                                 x=self.endogenous_feature,
+                                                 lags=self.ar_lags,
+                                                 constant=self.model_dict['constant'],
+                                                 rescale=False)
 
         elif self.model_type == 'NN':
             self.model_dict = {'layers': [10, 1]}
@@ -417,17 +459,18 @@ class ReturnModel:
 
         elif self.model_type == 'RNN':
             self.model = Sequential()
-
             self.model.add(SimpleRNN(
                 units=self.model_dict['layers'][0],
+                input_shape=(self.ar_lags, 1),
                 activation='tanh',
-                use_bias=True,
+                use_bias=False,
                 dropout=0.2,
                 return_sequences=False))
 
             self.model.add(Dense(
                 output_dim=self.model_dict['layers'][1]))
             self.model.add(Activation("linear"))
+
             self.model.compile(loss="mse",
                                optimizer="rmsprop")
 
@@ -439,12 +482,25 @@ class ReturnModel:
             self.fitted_resids = pd.Series(self.model.resids(
                 params=self.fitted_model.params[:params_index]))
 
-        elif self.model_type == 'NN':
-            self.generator_train = TimeseriesGenerator(data=self.return_train.ravel(),
-                                                       targets=self.return_train.ravel(),
-                                                       length=self.ar_lags,
-                                                       batch_size=8,
-                                                       end_index=self.index_validation)
+        elif self.model_type in ['NN', 'RNN', 'GRU', 'LSTM']:
+            # TODO: add endogenous variable with timeseries
+            if self.model_type in ['RNN', 'GRU', 'LSTM']:
+                data = self.return_train.values.reshape((len(self.return_train), 1))
+                self.generator_train = TimeseriesGenerator(data=data,
+                                                           targets=data[:, 0],
+                                                           length=self.ar_lags,
+                                                           batch_size=8,
+                                                           end_index=self.index_validation)
+                self.generator_validation = TimeseriesGenerator(data=data,
+                                                                targets=data[:, 0],
+                                                                length=self.ar_lags,
+                                                                start_index=self.index_validation)
+            else:
+                self.generator_train = TimeseriesGenerator(data=self.return_train.ravel(),
+                                                           targets=self.return_train.ravel(),
+                                                           length=self.ar_lags,
+                                                           batch_size=8,
+                                                           end_index=self.index_validation)
             self.model.fit_generator(self.generator_train,
                                      steps_per_epoch=1,
                                      epochs=200,
@@ -456,7 +512,8 @@ class ReturnModel:
 
             self.fitted_resids = y_pred_train[:, 0] - self.return_train.iloc[self.ar_lags:self.index_validation]
 
-    def evaluate(self):
+    def evaluate(self,
+                 evaluate_validation=True):
         if self.all_resids is None:
             if self.model_type == 'AR':
                 if self.overwrite_params is None:
@@ -468,20 +525,21 @@ class ReturnModel:
                                                       start=self.ar_lags) \
                     .mean.dropna()
                 self.r_pred_train = forecast.iloc[:self.index_validation]
-                self.r_pred_validation = forecast.iloc[self.index_validation+1:]
+                if evaluate_validation:
+                    self.r_pred_validation = forecast.iloc[self.index_validation+1:]
 
-            elif self.model_type == 'NN':
+            elif self.model_type in ['NN', 'RNN', 'GRU', 'LSTM']:
                 self.r_pred_train = pd.Series(self.fitted_model.predict_generator(self.generator_train)[:, 0],
                                               index=self.return_train.index[self.ar_lags:self.index_validation])
 
-                validation_generator = TimeseriesGenerator(data=self.return_train.ravel(),
-                                                           targets=self.return_train.ravel(),
-                                                           length=self.ar_lags,
-                                                           start_index=self.index_validation)
-                self.r_pred_validation = pd.Series(self.fitted_model.predict_generator(validation_generator)[:, 0],
-                                                   index=self.return_train.index[self.index_validation+self.ar_lags+1:])
-
-            self.all_resids = pd.concat([self.r_pred_train, self.r_pred_validation], axis=0)
+                if evaluate_validation:
+                    self.r_pred_validation = pd.Series(self.fitted_model.predict_generator(self.generator_validation)[:, 0],
+                                                       index=self.return_train.index[
+                                                             self.index_validation + self.ar_lags + 1:])
+            if evaluate_validation:
+                self.all_resids = pd.concat([self.r_pred_train, self.r_pred_validation], axis=0)
+            else:
+                self.all_resids = self.r_pred_train
 
     def get_return_pred_train(self):
         return self.r_pred_train
@@ -508,6 +566,17 @@ class ReturnModel:
                                                        length=self.ar_lags,
                                                        batch_size=8,
                                                        end_index=self.index_validation)
+        elif self.model_type in ['RNN', 'GRU', 'LSTM']:
+            data = self.return_train.values.reshape((len(self.return_train), 1))
+            self.generator_train = TimeseriesGenerator(data=data,
+                                                       targets=data[:, 0],
+                                                       length=self.ar_lags,
+                                                       batch_size=8,
+                                                       end_index=self.index_validation)
+            self.generator_validation = TimeseriesGenerator(data=data,
+                                                            targets=data[:, 0],
+                                                            length=self.ar_lags,
+                                                            start_index=self.index_validation)
 
 
 class VolatilityModel:
@@ -566,6 +635,23 @@ class VolatilityModel:
             self.model.compile(loss="mse",
                                optimizer="adam")
 
+        elif self.model_type == 'RNN':
+            self.model = Sequential()
+            self.model.add(SimpleRNN(
+                units=self.model_dict['layers'][0],
+                input_shape=(self.ar_lags, 1),
+                activation='tanh',
+                use_bias=False,
+                dropout=0.2,
+                return_sequences=False))
+
+            self.model.add(Dense(
+                output_dim=self.model_dict['layers'][1]))
+            self.model.add(Activation("linear"))
+
+            self.model.compile(loss="mse",
+                               optimizer="rmsprop")
+
     def fit(self):
         self.vol_true_train = self.resids.iloc[self.ar_lags:self.index_validation]
         self.vol_true_validation = self.resids.iloc[self.index_validation + self.ar_lags + 1:]
@@ -576,19 +662,31 @@ class VolatilityModel:
             self.fitted_conditional_volatility = self.fitted_model.conditional_volatility.dropna().apply(
                 lambda var: var ** 0.5)
 
-        elif self.model_type == 'NN':
+        elif self.model_type in ['NN', 'RNN', 'GRU', 'LSTM']:
             log_resids_sq = np.log(self.resids.apply(lambda resid: resid ** 2).values)
             if len(log_resids_sq.shape) > 1:
                 log_resids_sq = log_resids_sq[:, 0]
-            self.generator_train = TimeseriesGenerator(data=log_resids_sq,
-                                                       targets=log_resids_sq,
-                                                       length=self.ar_lags,
-                                                       batch_size=8,
-                                                       end_index=self.index_validation)
-            self.generator_validation = TimeseriesGenerator(data=log_resids_sq,
-                                                            targets=log_resids_sq,
-                                                            length=self.ar_lags,
-                                                            start_index=self.index_validation)
+            if self.model_type in ['RNN', 'GRU', 'LSTM']:
+                data = log_resids_sq.reshape((len(log_resids_sq), 1))
+                self.generator_train = TimeseriesGenerator(data=data,
+                                                           targets=data[:, 0],
+                                                           length=self.ar_lags,
+                                                           batch_size=8,
+                                                           end_index=self.index_validation)
+                self.generator_validation = TimeseriesGenerator(data=data,
+                                                                targets=data[:, 0],
+                                                                length=self.ar_lags,
+                                                                start_index=self.index_validation)
+            else:
+                self.generator_train = TimeseriesGenerator(data=log_resids_sq,
+                                                           targets=log_resids_sq,
+                                                           length=self.ar_lags,
+                                                           batch_size=8,
+                                                           end_index=self.index_validation)
+                self.generator_validation = TimeseriesGenerator(data=log_resids_sq,
+                                                                targets=log_resids_sq,
+                                                                length=self.ar_lags,
+                                                                start_index=self.index_validation)
             self.model.fit_generator(self.generator_train,
                                      steps_per_epoch=1,
                                      epochs=200,
@@ -599,24 +697,27 @@ class VolatilityModel:
             y_pred = np.exp(self.fitted_model.predict_generator(self.generator_train, verbose=0))
             self.fitted_conditional_volatility = pd.Series(y_pred[:, 0]).apply(lambda var: abs(var) ** 0.5)
 
-    def evaluate(self):
+    def evaluate(self,
+                 evaluate_validation=True):
         if self.vol_pred_train is None:
             if self.model_type == 'AR':
                 self.vol_pred_train = self.fitted_model.forecast(end=self.index_validation,
                                                                  horizon=1) \
                     .volatility.dropna()
-                self.vol_pred_validation = self.fitted_model.forecast(start=self.index_validation + 1,
-                                                                      horizon=1) \
-                    .volatility.dropna()
+                if evaluate_validation:
+                    self.vol_pred_validation = self.fitted_model.forecast(start=self.index_validation + 1,
+                                                                          horizon=1) \
+                        .volatility.dropna()
 
             elif self.model_type == 'NN':
                 self.vol_pred_train = pd.Series(np.exp(self.fitted_model.predict_generator(self.generator_train)[:, 0]),
                                                 index=self.resids.index[self.ar_lags:self.index_validation])
 
-                self.vol_pred_validation = pd.Series(
-                    np.exp(self.fitted_model.predict_generator(self.generator_validation)[:, 0]),
-                    index=self.resids.index[
-                          self.index_validation + self.ar_lags + 1:])
+                if evaluate_validation:
+                    self.vol_pred_validation = pd.Series(
+                        np.exp(self.fitted_model.predict_generator(self.generator_validation)[:, 0]),
+                        index=self.resids.index[
+                              self.index_validation + self.ar_lags + 1:])
 
     def get_volatility_pred_train(self):
         return self.vol_pred_train
@@ -654,18 +755,23 @@ if __name__ == '__main__':
     data_path = 'clean_data.csv'
     return_column = 'log_return'
 
+    params_eviews = pd.Series(data=[1.8e-18, 1.59e-18, 4.16e-8, 0.516, 0.166, 0.133, 1.01],
+                              index=['Const', 'log_return[-1]', 'omega', 'alpha[1]', 'alpha[2]', 'alpha[3]', 'nu'])
+
     model_dict = {
         'return_model': {
-            'type': 'NN',
+            'type': 'AR',
             'constant': True,
+            'params': None,
             'ar_lags': 1,
             'ma_lags': 5,
             'layers': [10, 1]
         },
         'volatility_model': {
             'type': 'NN',
+            'params': None,
             'constant': True,
-            'ar_lags': 6,
+            'ar_lags': 4,
             'ma_lags': 5,
             'layers': [10, 1]
         }
