@@ -6,7 +6,7 @@ from math import log, exp, sqrt
 from sklearn.metrics import mean_squared_error
 from keras.layers import Input
 from keras.layers.core import Dense, Activation, Dropout, Reshape, InputSpec
-from keras.layers.recurrent import LSTM, SimpleRNN
+from keras.layers.recurrent import LSTM, SimpleRNN, GRU
 from keras.models import Sequential
 from keras.preprocessing.sequence import TimeseriesGenerator
 
@@ -446,12 +446,12 @@ class ReturnModel:
                                                  rescale=False)
 
         elif self.model_type == 'NN':
-            self.model_dict = {'layers': [10, 1]}
             self.model = Sequential()
             self.model.add(Dense(units=self.model_dict['layers'][0],
-                                 activation='sigmoid',
+                                 activation=self.model_dict['activation'],
                                  input_dim=self.ar_lags))
-            #self.model.add(Dropout(0.2))
+            if self.model_dict['dropout']:
+                self.model.add(Dropout(0.2))
             self.model.add(Dense(units=self.model_dict['layers'][1],
                                  activation='linear'))
             self.model.compile(loss="mse",
@@ -462,10 +462,12 @@ class ReturnModel:
             self.model.add(SimpleRNN(
                 units=self.model_dict['layers'][0],
                 input_shape=(self.ar_lags, 1),
-                activation='tanh',
-                use_bias=False,
-                dropout=0.2,
+                activation=self.model_dict['activation'],
+                use_bias=self.model_dict['constant'],
                 return_sequences=False))
+
+            if self.model_dict['dropout']:
+                self.model.add(Dropout(0.2))
 
             self.model.add(Dense(
                 output_dim=self.model_dict['layers'][1]))
@@ -473,6 +475,99 @@ class ReturnModel:
 
             self.model.compile(loss="mse",
                                optimizer="rmsprop")
+
+        elif self.model_type == 'GRU':
+            self.model = Sequential()
+
+            self.model.add(GRU(
+                units=self.model_dict['layers'][0],
+                input_shape=(self.ar_lags, 1),
+                activation=self.model_dict['activation'],
+                return_sequences=False))
+
+            if self.model_dict['dropout']:
+                self.model.add(Dropout(0.2))
+
+            self.model.add(Dense(
+                units=self.model_dict['layers'][1]))
+            self.model.add(Activation("linear"))
+
+            self.model.compile(loss="mse",
+                               optimizer="rmsprop")
+
+        elif self.model_type == 'DoubleGRU':
+            self.model = Sequential()
+
+            self.model.add(GRU(
+                units=self.model_dict['layers'][0],
+                input_shape=(self.ar_lags, 1),
+                activation=self.model_dict['activation'],
+                return_sequences=False))
+
+            if self.model_dict['dropout']:
+                self.model.add(Dropout(0.2))
+
+            self.model.add(GRU(
+                units=self.model_dict['layers'][1],
+                activation=self.model_dict['activation'],
+                return_sequences=True))
+
+            if self.model_dict['dropout']:
+                self.model.add(Dropout(0.2))
+
+            self.model.add(Dense(
+                units=self.model_dict['layers'][2]))
+            self.model.add(Activation("linear"))
+
+            self.model.compile(loss="mse",
+                               optimizer="rmsprop")
+
+        elif self.model_type == 'LSTM':
+            self.model = Sequential()
+
+            self.model.add(LSTM(
+                units=self.model_dict['layers'][0],
+                input_shape=(self.ar_lags, 1),
+                activation=self.model_dict['activation'],
+                return_sequences=False))
+
+            if self.model_dict['dropout']:
+                self.model.add(Dropout(0.2))
+
+            self.model.add(Dense(
+                units=self.model_dict['layers'][1]))
+            self.model.add(Activation("linear"))
+
+            self.model.compile(loss="mse",
+                               optimizer="rmsprop")
+
+        elif self.model_type == 'DoubleLSTM':
+            self.model = Sequential()
+
+            self.model.add(LSTM(
+                units=self.model_dict['layers'][0],
+                input_shape=(self.ar_lags, 1),
+                activation=self.model_dict['activation'],
+                return_sequences=True))
+
+            if self.model_dict['dropout']:
+                self.model.add(Dropout(0.2))
+
+            self.model.add(LSTM(
+                units=self.model_dict['layers'][1],
+                activation=self.model_dict['activation'],
+                return_sequences=True))
+
+            if self.model_dict['dropout']:
+                self.model.add(Dropout(0.2))
+
+            self.model.add(Dense(
+                units=self.model_dict['layers'][2]))
+            self.model.add(Activation("linear"))
+
+            self.model.compile(loss="mse",
+                               optimizer="rmsprop")
+
 
     def fit(self):
         if self.model_type == 'AR':
@@ -627,9 +722,10 @@ class VolatilityModel:
         elif self.model_type == 'NN':
             self.model = Sequential()
             self.model.add(Dense(units=self.model_dict['layers'][0],
-                                 activation='sigmoid',
+                                 activation=self.model_dict['activation'],
                                  input_dim=self.ar_lags))
-            #self.model.add(Dropout(0.2))
+            if self.model_dict['dropout']:
+                self.model.add(Dropout(0.2))
             self.model.add(Dense(units=self.model_dict['layers'][1],
                                  activation='linear'))
             self.model.compile(loss="mse",
@@ -640,13 +736,107 @@ class VolatilityModel:
             self.model.add(SimpleRNN(
                 units=self.model_dict['layers'][0],
                 input_shape=(self.ar_lags, 1),
-                activation='tanh',
-                use_bias=False,
-                dropout=0.2,
+                activation=self.model_dict['activation'],
+                use_bias=self.model_dict['constant'],
                 return_sequences=False))
+
+            if self.model_dict['dropout']:
+                self.model.add(Dropout(0.2))
 
             self.model.add(Dense(
                 output_dim=self.model_dict['layers'][1]))
+            self.model.add(Activation("linear"))
+
+            self.model.compile(loss="mse",
+                               optimizer="rmsprop")
+
+        elif self.model_type == 'GRU':
+            self.model = Sequential()
+
+            self.model.add(GRU(
+                units=self.model_dict['layers'][0],
+                input_shape=(self.ar_lags, 1),
+                activation=self.model_dict['activation'],
+                return_sequences=False))
+
+            if self.model_dict['dropout']:
+                self.model.add(Dropout(0.2))
+
+            self.model.add(Dense(
+                units=self.model_dict['layers'][1]))
+            self.model.add(Activation("linear"))
+
+            self.model.compile(loss="mse",
+                               optimizer="rmsprop")
+
+        elif self.model_type == 'DoubleGRU':
+            self.model = Sequential()
+
+            self.model.add(GRU(
+                units=self.model_dict['layers'][0],
+                input_shape=(self.ar_lags, 1),
+                activation=self.model_dict['activation'],
+                return_sequences=False))
+
+            if self.model_dict['dropout']:
+                self.model.add(Dropout(0.2))
+
+            self.model.add(GRU(
+                units=self.model_dict['layers'][1],
+                activation=self.model_dict['activation'],
+                return_sequences=True))
+
+            if self.model_dict['dropout']:
+                self.model.add(Dropout(0.2))
+
+            self.model.add(Dense(
+                units=self.model_dict['layers'][2]))
+            self.model.add(Activation("linear"))
+
+            self.model.compile(loss="mse",
+                               optimizer="rmsprop")
+
+        elif self.model_type == 'LSTM':
+            self.model = Sequential()
+
+            self.model.add(LSTM(
+                units=self.model_dict['layers'][0],
+                input_shape=(self.ar_lags, 1),
+                activation=self.model_dict['activation'],
+                return_sequences=False))
+
+            if self.model_dict['dropout']:
+                self.model.add(Dropout(0.2))
+
+            self.model.add(Dense(
+                units=self.model_dict['layers'][1]))
+            self.model.add(Activation("linear"))
+
+            self.model.compile(loss="mse",
+                               optimizer="rmsprop")
+
+        elif self.model_type == 'DoubleLSTM':
+            self.model = Sequential()
+
+            self.model.add(LSTM(
+                units=self.model_dict['layers'][0],
+                input_shape=(self.ar_lags, 1),
+                activation=self.model_dict['activation'],
+                return_sequences=True))
+
+            if self.model_dict['dropout']:
+                self.model.add(Dropout(0.2))
+
+            self.model.add(LSTM(
+                units=self.model_dict['layers'][1],
+                activation=self.model_dict['activation'],
+                return_sequences=True))
+
+            if self.model_dict['dropout']:
+                self.model.add(Dropout(0.2))
+
+            self.model.add(Dense(
+                units=self.model_dict['layers'][2]))
             self.model.add(Activation("linear"))
 
             self.model.compile(loss="mse",
@@ -758,6 +948,8 @@ if __name__ == '__main__':
     params_eviews = pd.Series(data=[1.8e-18, 1.59e-18, 4.16e-8, 0.516, 0.166, 0.133, 1.01],
                               index=['Const', 'log_return[-1]', 'omega', 'alpha[1]', 'alpha[2]', 'alpha[3]', 'nu'])
 
+    # model_type_list = ['AR', 'arch', 'garch', 'NN', 'RNN', 'GRU', 'DoubleGRU', 'LSTM', 'DoubleLSTM']
+
     model_dict = {
         'return_model': {
             'type': 'AR',
@@ -765,15 +957,19 @@ if __name__ == '__main__':
             'params': None,
             'ar_lags': 1,
             'ma_lags': 5,
-            'layers': [10, 1]
+            'layers': [10, 1],
+            'activation': 'sigmoid',
+            'dropout': False
         },
         'volatility_model': {
-            'type': 'NN',
+            'type': 'LSTM',
             'params': None,
             'constant': True,
             'ar_lags': 4,
             'ma_lags': 5,
-            'layers': [10, 1]
+            'layers': [10, 1],
+            'activation': 'sigmoid',
+            'dropout': False
         }
     }
 
