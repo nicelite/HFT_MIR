@@ -568,7 +568,6 @@ class ReturnModel:
             self.model.compile(loss="mse",
                                optimizer="rmsprop")
 
-
     def fit(self):
         if self.model_type == 'AR':
             self.fitted_model = self.model.fit(update_freq=5,
@@ -596,6 +595,11 @@ class ReturnModel:
                                                            length=self.ar_lags,
                                                            batch_size=8,
                                                            end_index=self.index_validation)
+                self.generator_validation = TimeseriesGenerator(data=self.return_train.ravel(),
+                                                                targets=self.return_train.ravel(),
+                                                                length=self.ar_lags,
+                                                                start_index=self.index_validation)
+
             self.model.fit_generator(self.generator_train,
                                      steps_per_epoch=1,
                                      epochs=200,
@@ -661,6 +665,10 @@ class ReturnModel:
                                                        length=self.ar_lags,
                                                        batch_size=8,
                                                        end_index=self.index_validation)
+            self.generator_validation = TimeseriesGenerator(data=self.return_train.ravel(),
+                                                            targets=self.return_train.ravel(),
+                                                            length=self.ar_lags,
+                                                            start_index=self.index_validation)
         elif self.model_type in ['RNN', 'GRU', 'LSTM']:
             data = self.return_train.values.reshape((len(self.return_train), 1))
             self.generator_train = TimeseriesGenerator(data=data,
@@ -926,14 +934,18 @@ def find_opt_params(stock,
                     write_path='grid_search_params.xlsx'):
     test_dict = dict()
     for value in value_list:
-        stock.set_model_attribute(model_type=model_type_to_change,
-                                  attribute=attribute_to_change,
-                                  value=value)
-        stock.fit_model()
-        stock.model.evaluate()
-        stock.model.homoskedasticity_test()
-        test_dict[value] = stock.get_metrics()
-        stock.reset_metrics()
+        model_test_dict = dict()
+        for i in range(5):
+            stock.set_model_attribute(model_type=model_type_to_change,
+                                      attribute=attribute_to_change,
+                                      value=value)
+            stock.fit_model()
+            stock.model.evaluate()
+            stock.model.homoskedasticity_test()
+            model_test_dict[i] = stock.get_metrics()
+            stock.reset_metrics()
+        k_opt, i_opt = min([[model_test_dict[i]['final_kurtosis'], i] for i in range(5)])
+        test_dict[value] = model_test_dict[i_opt]
 
     metrics_list = list(test_dict[value_list[0]].keys())
     df_dict = {metric: [test_dict[key][metric] for key in value_list] for metric in metrics_list}
@@ -952,24 +964,24 @@ if __name__ == '__main__':
 
     model_dict = {
         'return_model': {
-            'type': 'AR',
+            'type': 'NN',
             'constant': True,
             'params': None,
             'ar_lags': 1,
             'ma_lags': 5,
             'layers': [10, 1],
             'activation': 'sigmoid',
-            'dropout': False
+            'dropout': True
         },
         'volatility_model': {
-            'type': 'LSTM',
-            'params': None,
+            'type': 'NN',
             'constant': True,
+            'params': None,
             'ar_lags': 4,
             'ma_lags': 5,
             'layers': [10, 1],
             'activation': 'sigmoid',
-            'dropout': False
+            'dropout': True
         }
     }
 
@@ -978,33 +990,13 @@ if __name__ == '__main__':
                   return_column=return_column,
                   model_dict=model_dict)
 
-    # find_opt_params(stock=stock,
-    #                 model_type_to_change='volatility_model',
-    #                 attribute_to_change='ar_lags',
-    #                 value_list=range(1, 11))
+    # stock.fit_model()
+    # stock.model.evaluate()
+    # stock.model.homoskedasticity_test()
+    # stock.model.summary_fit()
 
-    stock.fit_model()
-
-    stock.model.evaluate()
-
-    stock.model.homoskedasticity_test()
-
-    stock.model.summary_fit()
-
-    # portfolio = Portfolio(stocks_names=['Bnp Paribas'],
-    #                       stocks_paths=[data_path],
-    #                       return_column=return_column,
-    #                       return_model_types=[return_model_type],
-    #                       volatility_model_types=[volatility_model_type])
-    #
-    # portfolio.model_training()
-
-    # model = arch.arch_model(y=df_small['log_return'], mean='AR', lags=2, vol='arch', p=5)
-
-    # res = model.fit(update_freq=5, last_obs=index_train)
-    # print(res.summary())
-    # res.plot(annualize='D')
-
-    # pred = res.forecast(start=index_train + 1, horizon=3)
-    # pred.mean.dropna().head(10)
-
+    find_opt_params(stock=stock,
+                    model_type_to_change='volatility_model',
+                    attribute_to_change='ar_lags',
+                    value_list=range(1, 11),
+                    write_path='grid_search_params_nn_nn.xlsx')
