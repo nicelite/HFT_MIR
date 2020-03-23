@@ -8,7 +8,7 @@ from sklearn.metrics import mean_squared_error
 from keras.layers import Input
 from keras.layers.core import Dense, Activation, Dropout, Reshape, InputSpec
 from keras.layers.recurrent import LSTM, SimpleRNN, GRU
-from keras.models import Sequential
+from keras.models import Sequential, load_model
 from keras.preprocessing.sequence import TimeseriesGenerator
 
 from statsmodels.stats.diagnostic import het_breuschpagan
@@ -300,6 +300,8 @@ class StockModel:
 
     def reset_metrics(self):
         self.metrics_dict = dict()
+        self.return_model.reset_model()
+        self.volatility_model.reset_model()
 
     def evaluate_return_model(self,
                               model=None,
@@ -317,6 +319,35 @@ class StockModel:
             if model is None:
                 model = self.volatility_model
             model.evaluate(evaluate_validation=evaluate_validation)
+
+    def save_model(self,
+                   write_path=None):
+        if write_path is None:
+            write_path = 'models/%s_%i_%s_%i' % \
+                         (self.model_dict['return_model']['type'],
+                          self.model_dict['return_model']['ar_lags'],
+                          self.model_dict['volatility_model']['type'],
+                          self.model_dict['volatility_model']['ar_lags'])
+        return_write_path = write_path + '_return.h5'
+        volatility_write_path = write_path + '_vol.h5'
+
+        self.return_model.fitted_model.save(return_write_path)
+        self.volatility_model.fitted_model.save(volatility_write_path)
+
+    def read_model(self,
+                   write_path=None):
+        if write_path is None:
+            write_path = 'models/%s_%i_%s_%i' % \
+                         (self.model_dict['return_model']['type'],
+                          self.model_dict['return_model']['ar_lags'],
+                          self.model_dict['volatility_model']['type'],
+                          self.model_dict['volatility_model']['ar_lags'])
+        return_write_path = write_path + '_return.h5'
+        volatility_write_path = write_path + '_vol.h5'
+
+        self.return_model.fitted_model = load_model(return_write_path)
+        self.volatility_model.fitted_model = load_model(volatility_write_path)
+        self.reset_metrics()
 
 
 class MixModel:
@@ -411,6 +442,12 @@ class MixModel:
     def set_params(self,
                    params):
         self.overwrite_params = params
+
+    def reset_model(self):
+        self.r_pred_train = None
+        self.r_pred_validation = None
+        self.vol_pred_train = None
+        self.vol_pred_validation = None
 
 
 class ReturnModel:
@@ -621,7 +658,7 @@ class ReturnModel:
                                      steps_per_epoch=1,
                                      epochs=200,
                                      verbose=0,
-                                     use_multiprocessing=False)
+                                     use_multiprocessing=True)
             self.fitted_model = self.model
 
             y_pred_train = self.fitted_model.predict_generator(self.generator_train, verbose=0)
@@ -665,6 +702,9 @@ class ReturnModel:
 
     def summary(self):
         print(self.fitted_model.summary())
+
+    def reset_model(self):
+        self.all_resids = None
 
     def set_return_train(self,
                          S):
@@ -906,7 +946,7 @@ class VolatilityModel:
                                      steps_per_epoch=1,
                                      epochs=200,
                                      verbose=0,
-                                     use_multiprocessing=False)
+                                     use_multiprocessing=True)
             self.fitted_model = self.model
 
             y_pred = np.exp(self.fitted_model.predict_generator(self.generator_train, verbose=0))
@@ -940,6 +980,9 @@ class VolatilityModel:
     def get_volatility_pred_validation(self):
         return self.vol_pred_validation
 
+    def reset_model(self):
+        self.vol_pred_train = None
+
     def summary(self):
         print(self.fitted_model.summary())
 
@@ -970,7 +1013,9 @@ def find_opt_params(stock,
             end = time.time()
             print("Step %i / %i, Time remaining (h) : %.2f".format(step, n_steps, (end-start)*(n_steps-step)/3600))
         k_opt, i_opt = min([[model_test_dict[i]['final_kurtosis'], i] for i in range(5)])
+        mean_k = sum([model_test_dict[i]['final_kurtosis'] for i in range(5)]) / 5
         test_dict[value] = model_test_dict[i_opt]
+        test_dict[value]['mean_kurtosis'] = mean_k
 
     metrics_list = list(test_dict[value_list[0]].keys())
     df_dict = {metric: [test_dict[key][metric] for key in value_list] for metric in metrics_list}
@@ -999,49 +1044,7 @@ if __name__ == '__main__':
             'dropout': True
         },
         'volatility_model': {
-            'type': 'GRU',
-            'constant': True,
-            'params': None,
-            'ar_lags': 5,
-            'ma_lags': 5,
-            'layers': [10, 1],
-            'activation': 'sigmoid',
-            'dropout': True
-        },
-        'stock_model': {
-            'n_iteration': 1
-        }
-    }
-
-    stock = Stock(stock_name='Bnp Paribas',
-                  data_path=data_path,
-                  return_column=return_column,
-                  model_dict=model_dict)
-
-    # stock.fit_model()
-    # stock.model.evaluate()
-    # stock.model.homoskedasticity_test()
-    # stock.model.summary_fit()
-
-    find_opt_params(stock=stock,
-                    model_type_to_change='return_model',
-                    attribute_to_change='ar_lags',
-                    value_list=range(1, 11),
-                    write_path='grid_search_params_nn_p_gru.xlsx')
-
-    model_dict = {
-        'return_model': {
-            'type': 'NN',
-            'constant': True,
-            'params': None,
-            'ar_lags': 1,
-            'ma_lags': 5,
-            'layers': [10, 1],
-            'activation': 'sigmoid',
-            'dropout': True
-        },
-        'volatility_model': {
-            'type': 'LSTM',
+            'type': 'RNN',
             'constant': True,
             'params': None,
             'ar_lags': 4,
@@ -1054,12 +1057,19 @@ if __name__ == '__main__':
             'n_iteration': 1
         }
     }
+
     stock = Stock(stock_name='Bnp Paribas',
                   data_path=data_path,
                   return_column=return_column,
                   model_dict=model_dict)
-    find_opt_params(stock=stock,
-                    model_type_to_change='volatility_model',
-                    attribute_to_change='ar_lags',
-                    value_list=range(1, 11),
-                    write_path='grid_search_params_nn_lstm.xlsx')
+
+    stock.fit_model()
+    stock.model.evaluate()
+    stock.model.homoskedasticity_test()
+    stock.model.summary_fit()
+
+    # find_opt_params(stock=stock,
+    #                 model_type_to_change='return_model',
+    #                 attribute_to_change='ar_lags',
+    #                 value_list=range(1, 11),
+    #                 write_path='grid_search_params_nn_p_gru.xlsx')
