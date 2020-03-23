@@ -2,6 +2,7 @@ import pandas as pd
 import arch
 import numpy as np
 from math import log, exp, sqrt
+import time
 
 from sklearn.metrics import mean_squared_error
 from keras.layers import Input
@@ -154,6 +155,41 @@ class StockModel:
         self.heteroscedasticity = None
         self.homoscedastic_return = None
 
+    def fit_iteration(self,
+                      prev_return_model,
+                      prev_volatility_model,
+                      step=1):
+        if step == self.model_dict['stock_model']['n_iteration']:
+            index_validation = self.stock.index_validation
+        else:
+            index_validation = None
+
+        self.evaluate(return_model=prev_return_model,
+                      volatility_model=prev_volatility_model,
+                      evaluate_validation=False,
+                      step=step)
+
+        self.heteroscedasticity = prev_volatility_model.fitted_conditional_volatility
+        self.homoscedastic_return = self.stock.get_homoscedasticity_training_data()
+
+        self.return_model = ReturnModel(stock_model=self,
+                                        model_dict=self.model_dict['return_model'],
+                                        return_train=self.homoscedastic_return,
+                                        index_validation=index_validation,
+                                        endogenous_feature=self.stock.get_homoscedasticity_endo_feature())
+        self.return_model.build_model()
+        self.return_model.fit()
+
+        self.return_model.set_return_train(S=self.data_training)
+        self.evaluate_return_model()
+
+        self.volatility_model = VolatilityModel(stock_model=self,
+                                                model_dict=self.model_dict['volatility_model'],
+                                                resids=self.return_model.all_resids,
+                                                index_validation=index_validation)
+        self.volatility_model.build_model()
+        self.volatility_model.fit()
+
     def fit_model(self):
         if self.return_model_type == 'AR' and self.volatility_model_type in ['arch', 'garch']:
             self.return_model = MixModel(stock_model=self,
@@ -182,30 +218,10 @@ class StockModel:
             volatility_model.build_model()
             volatility_model.fit()
 
-            self.evaluate(return_model=return_model,
-                          volatility_model=volatility_model,
-                          evaluate_validation=False)
-
-            self.heteroscedasticity = volatility_model.fitted_conditional_volatility
-            self.homoscedastic_return = self.stock.get_homoscedasticity_training_data()
-
-            self.return_model = ReturnModel(stock_model=self,
-                                            model_dict=self.model_dict['return_model'],
-                                            return_train=self.homoscedastic_return,
-                                            index_validation=self.stock.index_validation,
-                                            endogenous_feature=self.stock.get_homoscedasticity_endo_feature())
-            self.return_model.build_model()
-            self.return_model.fit()
-
-            self.return_model.set_return_train(S=self.data_training)
-            self.evaluate_return_model()
-
-            self.volatility_model = VolatilityModel(stock_model=self,
-                                                    model_dict=self.model_dict['volatility_model'],
-                                                    resids=self.return_model.all_resids,
-                                                    index_validation=self.stock.index_validation)
-            self.volatility_model.build_model()
-            self.volatility_model.fit()
+            for step in range(1, self.model_dict['stock_model']['n_iteration']+1):
+                self.fit_iteration(prev_return_model=return_model,
+                                   prev_volatility_model=volatility_model,
+                                   step=step)
 
     def homoskedasticity_test(self):
         training = self.stock.remove_normalisation(self.data_training)
@@ -219,8 +235,9 @@ class StockModel:
     def evaluate(self,
                  return_model=None,
                  volatility_model=None,
-                 evaluate_validation=True):
-        lab=''
+                 evaluate_validation=True,
+                 step=1):
+        lab = '_%i' % (step)
         if return_model is None or volatility_model is None:
             return_model = self.return_model
             volatility_model = self.volatility_model
@@ -932,10 +949,15 @@ def find_opt_params(stock,
                     attribute_to_change,
                     value_list,
                     write_path='grid_search_params.xlsx'):
+    n_steps = len(value_list)*5
+    step = 0
     test_dict = dict()
     for value in value_list:
         model_test_dict = dict()
         for i in range(5):
+            step += 1
+            start = time.time()
+
             stock.set_model_attribute(model_type=model_type_to_change,
                                       attribute=attribute_to_change,
                                       value=value)
@@ -944,6 +966,9 @@ def find_opt_params(stock,
             stock.model.homoskedasticity_test()
             model_test_dict[i] = stock.get_metrics()
             stock.reset_metrics()
+
+            end = time.time()
+            print("Step %i / %i, Time remaining (h) : %.2f".format(step, n_steps, (end-start)*(n_steps-step)/3600))
         k_opt, i_opt = min([[model_test_dict[i]['final_kurtosis'], i] for i in range(5)])
         test_dict[value] = model_test_dict[i_opt]
 
@@ -982,6 +1007,9 @@ if __name__ == '__main__':
             'layers': [10, 1],
             'activation': 'sigmoid',
             'dropout': True
+        },
+        'stock_model': {
+            'n_iteration': 1
         }
     }
 
@@ -1021,6 +1049,9 @@ if __name__ == '__main__':
             'layers': [10, 1],
             'activation': 'sigmoid',
             'dropout': True
+        },
+        'stock_model': {
+            'n_iteration': 1
         }
     }
     stock = Stock(stock_name='Bnp Paribas',
