@@ -576,9 +576,9 @@ class ReturnModel:
             self.fitted_resids = pd.Series(self.model.resids(
                 params=self.fitted_model.params[:params_index]))
 
-        elif self.model_type in ['NN', 'RNN', 'GRU', 'LSTM']:
+        elif self.model_type in ['NN', 'RNN', 'GRU', 'LSTM', 'DoubleGRU', 'DoubleLSTM']:
             # TODO: add endogenous variable with timeseries
-            if self.model_type in ['RNN', 'GRU', 'LSTM']:
+            if self.model_type in ['RNN', 'GRU', 'LSTM', 'DoubleGRU', 'DoubleLSTM']:
                 data = self.return_train.values.reshape((len(self.return_train), 1))
                 self.generator_train = TimeseriesGenerator(data=data,
                                                            targets=data[:, 0],
@@ -627,7 +627,7 @@ class ReturnModel:
                 if evaluate_validation:
                     self.r_pred_validation = forecast.iloc[self.index_validation+1:]
 
-            elif self.model_type in ['NN', 'RNN', 'GRU', 'LSTM']:
+            elif self.model_type in ['NN', 'RNN', 'GRU', 'LSTM', 'DoubleGRU', 'DoubleLSTM']:
                 self.r_pred_train = pd.Series(self.fitted_model.predict_generator(self.generator_train)[:, 0],
                                               index=self.return_train.index[self.ar_lags:self.index_validation])
 
@@ -669,7 +669,7 @@ class ReturnModel:
                                                             targets=self.return_train.ravel(),
                                                             length=self.ar_lags,
                                                             start_index=self.index_validation)
-        elif self.model_type in ['RNN', 'GRU', 'LSTM']:
+        elif self.model_type in ['RNN', 'GRU', 'LSTM', 'DoubleGRU', 'DoubleLSTM']:
             data = self.return_train.values.reshape((len(self.return_train), 1))
             self.generator_train = TimeseriesGenerator(data=data,
                                                        targets=data[:, 0],
@@ -752,7 +752,7 @@ class VolatilityModel:
                 self.model.add(Dropout(0.2))
 
             self.model.add(Dense(
-                output_dim=self.model_dict['layers'][1]))
+                units=self.model_dict['layers'][1]))
             self.model.add(Activation("linear"))
 
             self.model.compile(loss="mse",
@@ -860,11 +860,11 @@ class VolatilityModel:
             self.fitted_conditional_volatility = self.fitted_model.conditional_volatility.dropna().apply(
                 lambda var: var ** 0.5)
 
-        elif self.model_type in ['NN', 'RNN', 'GRU', 'LSTM']:
+        elif self.model_type in ['NN', 'RNN', 'GRU', 'LSTM', 'DoubleGRU', 'DoubleLSTM']:
             log_resids_sq = np.log(self.resids.apply(lambda resid: resid ** 2).values)
             if len(log_resids_sq.shape) > 1:
                 log_resids_sq = log_resids_sq[:, 0]
-            if self.model_type in ['RNN', 'GRU', 'LSTM']:
+            if self.model_type in ['RNN', 'GRU', 'LSTM', 'DoubleGRU', 'DoubleLSTM']:
                 data = log_resids_sq.reshape((len(log_resids_sq), 1))
                 self.generator_train = TimeseriesGenerator(data=data,
                                                            targets=data[:, 0],
@@ -907,7 +907,7 @@ class VolatilityModel:
                                                                           horizon=1) \
                         .volatility.dropna()
 
-            elif self.model_type == 'NN':
+            elif self.model_type in ['NN', 'RNN', 'GRU', 'LSTM', 'DoubleGRU', 'DoubleLSTM']:
                 self.vol_pred_train = pd.Series(np.exp(self.fitted_model.predict_generator(self.generator_train)[:, 0]),
                                                 index=self.resids.index[self.ar_lags:self.index_validation])
 
@@ -974,10 +974,10 @@ if __name__ == '__main__':
             'dropout': True
         },
         'volatility_model': {
-            'type': 'NN',
+            'type': 'GRU',
             'constant': True,
             'params': None,
-            'ar_lags': 4,
+            'ar_lags': 5,
             'ma_lags': 5,
             'layers': [10, 1],
             'activation': 'sigmoid',
@@ -996,7 +996,39 @@ if __name__ == '__main__':
     # stock.model.summary_fit()
 
     find_opt_params(stock=stock,
+                    model_type_to_change='return_model',
+                    attribute_to_change='ar_lags',
+                    value_list=range(1, 11),
+                    write_path='grid_search_params_nn_p_gru.xlsx')
+
+    model_dict = {
+        'return_model': {
+            'type': 'NN',
+            'constant': True,
+            'params': None,
+            'ar_lags': 1,
+            'ma_lags': 5,
+            'layers': [10, 1],
+            'activation': 'sigmoid',
+            'dropout': True
+        },
+        'volatility_model': {
+            'type': 'LSTM',
+            'constant': True,
+            'params': None,
+            'ar_lags': 4,
+            'ma_lags': 5,
+            'layers': [10, 1],
+            'activation': 'sigmoid',
+            'dropout': True
+        }
+    }
+    stock = Stock(stock_name='Bnp Paribas',
+                  data_path=data_path,
+                  return_column=return_column,
+                  model_dict=model_dict)
+    find_opt_params(stock=stock,
                     model_type_to_change='volatility_model',
                     attribute_to_change='ar_lags',
                     value_list=range(1, 11),
-                    write_path='grid_search_params_nn_nn.xlsx')
+                    write_path='grid_search_params_nn_lstm.xlsx')
