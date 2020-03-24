@@ -1,8 +1,11 @@
 import pandas as pd
 import arch
 import numpy as np
-from math import log, exp, sqrt
+from math import sqrt
 import time
+
+import warnings
+warnings.filterwarnings('ignore',category=FutureWarning)
 
 from sklearn.metrics import mean_squared_error
 from keras.layers import Input
@@ -104,7 +107,7 @@ class Stock:
         hetero_values = self.model.heteroscedasticity.values
         if len(hetero_values.shape) > 1:
             hetero_values = hetero_values[:, 0]
-        return
+        return hetero_values
 
     def get_homoscedasticity_training_data(self):
         index_start = len(self.training_return) - len(self.model.heteroscedasticity)
@@ -334,6 +337,10 @@ class StockModel:
         self.return_model.fitted_model.save(return_write_path)
         self.volatility_model.fitted_model.save(volatility_write_path)
 
+        f = open(write_path + '_metrics.txt', "w")
+        f.write(str(self.metrics_dict))
+        f.close()
+
     def read_model(self,
                    write_path=None):
         if write_path is None:
@@ -348,6 +355,10 @@ class StockModel:
         self.return_model.fitted_model = load_model(return_write_path)
         self.volatility_model.fitted_model = load_model(volatility_write_path)
         self.reset_metrics()
+
+        f = open(write_path + '_metrics.txt', "w")
+        self.metrics_dict = eval(f.read())
+        f.close()
 
 
 class MixModel:
@@ -987,7 +998,7 @@ class VolatilityModel:
         print(self.fitted_model.summary())
 
 
-def find_opt_params(stock,
+def find_opt_params(model_dict,
                     model_type_to_change,
                     attribute_to_change,
                     value_list,
@@ -997,25 +1008,38 @@ def find_opt_params(stock,
     test_dict = dict()
     for value in value_list:
         model_test_dict = dict()
+        model_dict[model_type_to_change][attribute_to_change] = value
+        model_write_path = 'models_p/%s_%i_%s_%i' % \
+                           (model_dict['return_model']['type'],
+                            model_dict['return_model']['ar_lags'],
+                            model_dict['volatility_model']['type'],
+                            model_dict['volatility_model']['ar_lags'])
         for i in range(5):
             step += 1
             start = time.time()
 
-            stock.set_model_attribute(model_type=model_type_to_change,
-                                      attribute=attribute_to_change,
-                                      value=value)
+            stock = Stock(stock_name='Bnp Paribas',
+                          data_path='clean_data.csv',
+                          return_column='log_return',
+                          model_dict=model_dict)
+
             stock.fit_model()
             stock.model.evaluate()
             stock.model.homoskedasticity_test()
+            stock.model.save_model(write_path=model_write_path+'_%i' % i)
+
             model_test_dict[i] = stock.get_metrics()
             stock.reset_metrics()
 
             end = time.time()
-            print("Step %i / %i, Time remaining (h) : %.2f".format(step, n_steps, (end-start)*(n_steps-step)/3600))
+            print("Step %i / %i, Time remaining (min) : %.2f" % (step, n_steps, (end-start)*(n_steps-step)/60))
         k_opt, i_opt = min([[model_test_dict[i]['final_kurtosis'], i] for i in range(5)])
-        mean_k = sum([model_test_dict[i]['final_kurtosis'] for i in range(5)]) / 5
+        mean_k = np.mean([model_test_dict[i]['final_kurtosis'] for i in range(5)])
+        std_k = np.std([model_test_dict[i]['final_kurtosis'] for i in range(5)]) / 5
         test_dict[value] = model_test_dict[i_opt]
         test_dict[value]['mean_kurtosis'] = mean_k
+        test_dict[value]['std_kurtosis'] = std_k
+        test_dict[value]['num_model'] = i_opt
 
     metrics_list = list(test_dict[value_list[0]].keys())
     df_dict = {metric: [test_dict[key][metric] for key in value_list] for metric in metrics_list}
@@ -1037,17 +1061,17 @@ if __name__ == '__main__':
             'type': 'NN',
             'constant': True,
             'params': None,
-            'ar_lags': 1,
+            'ar_lags': 6,
             'ma_lags': 5,
             'layers': [10, 1],
             'activation': 'sigmoid',
             'dropout': True
         },
         'volatility_model': {
-            'type': 'RNN',
+            'type': 'GRU',
             'constant': True,
             'params': None,
-            'ar_lags': 4,
+            'ar_lags': 5,
             'ma_lags': 5,
             'layers': [10, 1],
             'activation': 'sigmoid',
@@ -1058,18 +1082,103 @@ if __name__ == '__main__':
         }
     }
 
-    stock = Stock(stock_name='Bnp Paribas',
-                  data_path=data_path,
-                  return_column=return_column,
-                  model_dict=model_dict)
+    # kurtosis = 50
+    # i = 1
+    # k_list = list()
+    # while kurtosis >= 31:
+    #     stock = Stock(stock_name='Bnp Paribas',
+    #                   data_path=data_path,
+    #                   return_column=return_column,
+    #                   model_dict=model_dict)
+    #
+    #
+    #     stock.fit_model()
+    #     stock.model.evaluate()
+    #     stock.model.homoskedasticity_test()
+    #     kurtosis = stock.model.metrics_dict['final_kurtosis']
+    #     k_list.append(kurtosis)
+    #     i += 1
+    #
+    # stock.model.metrics_dict['kurtosis_mean'] = sum(k_list) / i
+    # stock.model.save_model()
+    #
+    # stock = Stock(stock_name='Bnp Paribas',
+    #               data_path=data_path,
+    #               return_column=return_column,
+    #               model_dict=model_dict)
+    #
+    # stock.fit_model()
+    # stock.model.evaluate()
+    # stock.model.homoskedasticity_test()
+    # stock.model.summary_fit()
 
-    stock.fit_model()
-    stock.model.evaluate()
-    stock.model.homoskedasticity_test()
-    stock.model.summary_fit()
+    find_opt_params(model_dict=model_dict,
+                    model_type_to_change='volatility_model',
+                    attribute_to_change='ar_lags',
+                    value_list=range(1, 11),
+                    write_path='grid_search_nn_6_gru_p.xlsx')
 
-    # find_opt_params(stock=stock,
-    #                 model_type_to_change='return_model',
+    # model_dict = {
+    #     'return_model': {
+    #         'type': 'GRU',
+    #         'constant': True,
+    #         'params': None,
+    #         'ar_lags': 6,
+    #         'ma_lags': 5,
+    #         'layers': [10, 1],
+    #         'activation': 'sigmoid',
+    #         'dropout': True
+    #     },
+    #     'volatility_model': {
+    #         'type': 'GRU',
+    #         'constant': True,
+    #         'params': None,
+    #         'ar_lags': 5,
+    #         'ma_lags': 5,
+    #         'layers': [10, 1],
+    #         'activation': 'sigmoid',
+    #         'dropout': True
+    #     },
+    #     'stock_model': {
+    #         'n_iteration': 1
+    #     }
+    # }
+    #
+    # find_opt_params(model_dict=model_dict,
+    #                 model_type_to_change='volatility_model',
     #                 attribute_to_change='ar_lags',
     #                 value_list=range(1, 11),
-    #                 write_path='grid_search_params_nn_p_gru.xlsx')
+    #                 write_path='grid_search_params_gru_gru_p.xlsx')
+    #
+    # model_dict = {
+    #     'return_model': {
+    #         'type': 'AR',
+    #         'constant': True,
+    #         'params': None,
+    #         'ar_lags': 6,
+    #         'ma_lags': 5,
+    #         'layers': [10, 1],
+    #         'activation': 'sigmoid',
+    #         'dropout': True
+    #     },
+    #     'volatility_model': {
+    #         'type': 'GRU',
+    #         'constant': True,
+    #         'params': None,
+    #         'ar_lags': 5,
+    #         'ma_lags': 5,
+    #         'layers': [10, 1],
+    #         'activation': 'sigmoid',
+    #         'dropout': True
+    #     },
+    #     'stock_model': {
+    #         'n_iteration': 1
+    #     }
+    # }
+    #
+    # find_opt_params(model_dict=model_dict,
+    #                 model_type_to_change='volatility_model',
+    #                 attribute_to_change='ar_lags',
+    #                 value_list=range(1, 11),
+    #                 write_path='grid_search_params_ar_gru_p.xlsx')
+    #
