@@ -789,7 +789,7 @@ class ReturnModel:
         elif self.model_type in ['NN', 'RNN', 'GRU', 'LSTM', 'DoubleGRU', 'DoubleLSTM']:
             # TODO: add endogenous variable with timeseries
             if self.model_type in ['RNN', 'GRU', 'LSTM', 'DoubleGRU', 'DoubleLSTM']:
-                data = self.return_train.values.reshape((len(self.return_train), 1))
+                data = np.exp(self.return_train.values.reshape((len(self.return_train), 1)))
                 self.generator_train = TimeseriesGenerator(data=data,
                                                            targets=data[:, 0],
                                                            length=self.ar_lags,
@@ -800,12 +800,13 @@ class ReturnModel:
                                                                 length=self.ar_lags,
                                                                 start_index=self.index_validation)
             else:
-                self.generator_train = TimeseriesGenerator(data=self.return_train.ravel(),
+                data = np.exp(self.return_train.ravel)
+                self.generator_train = TimeseriesGenerator(data=data,
                                                            targets=self.return_train.ravel(),
-                                                           length=self.ar_lags,
+                                                           length=data[:, 0],
                                                            batch_size=8,
                                                            end_index=self.index_validation)
-                self.generator_validation = TimeseriesGenerator(data=self.return_train.ravel(),
+                self.generator_validation = TimeseriesGenerator(data=data,
                                                                 targets=self.return_train.ravel(),
                                                                 length=self.ar_lags,
                                                                 start_index=self.index_validation)
@@ -838,11 +839,11 @@ class ReturnModel:
                     self.r_pred_validation = forecast.iloc[self.index_validation+1:]
 
             elif self.model_type in ['NN', 'RNN', 'GRU', 'LSTM', 'DoubleGRU', 'DoubleLSTM']:
-                self.r_pred_train = pd.Series(self.fitted_model.predict_generator(self.generator_train)[:, 0],
+                self.r_pred_train = pd.Series(np.log(self.fitted_model.predict_generator(self.generator_train)[:, 0]),
                                               index=self.return_train.index[self.ar_lags:self.index_validation])
 
                 if evaluate_validation:
-                    self.r_pred_validation = pd.Series(self.fitted_model.predict_generator(self.generator_validation)[:, 0],
+                    self.r_pred_validation = pd.Series(np.log(self.fitted_model.predict_generator(self.generator_validation)[:, 0]),
                                                        index=self.return_train.index[
                                                              self.index_validation + self.ar_lags + 1:])
             if evaluate_validation:
@@ -868,20 +869,21 @@ class ReturnModel:
             self.r_pred_test = self.r_pred_test[list(self.r_pred_test.columns)[0]]
 
         elif self.model_type == 'NN':
-            generator_test = TimeseriesGenerator(data=return_test.ravel(),
-                                                 targets=return_test.ravel(),
+            data = np.exp(return_test.ravel())
+            generator_test = TimeseriesGenerator(data=data,
+                                                 targets=data[:, 0],
                                                  length=self.ar_lags)
-            self.r_pred_test = pd.Series(np.exp(self.fitted_model.predict_generator(generator_test)[:, 0]),
+            self.r_pred_test = pd.Series(np.log(self.fitted_model.predict_generator(generator_test)[:, 0]),
                                          index=return_test.index[self.ar_lags + 1:])
 
         elif self.model_type in ['RNN', 'GRU', 'LSTM', 'DoubleGRU', 'DoubleLSTM']:
-            data = return_test.values.reshape((len(return_test), 1))
+            data = np.exp(return_test.values).reshape((len(return_test), 1))
 
             generator_test = TimeseriesGenerator(data=data,
                                                  targets=data[:, 0],
                                                  length=self.ar_lags)
 
-            self.r_pred_test = pd.Series(np.exp(self.fitted_model.predict_generator(generator_test)[:, 0]),
+            self.r_pred_test = pd.Series(np.log(self.fitted_model.predict_generator(generator_test)[:, 0]),
                                          index=return_test.index[self.ar_lags + 1:])
 
     def get_return_pred_train(self):
@@ -1352,27 +1354,27 @@ if __name__ == '__main__':
 
     model_dict = {
         'return_model': {
-            'type': 'AR',
+            'type': 'LSTM',
             'constant': True,
-            'params': params_eviews,
-            'ar_lags': 1,
+            'params': None,
+            'ar_lags': 6,
             'ma_lags': 5,
             'layers': [10, 1],
             'activation': 'sigmoid',
             'dropout': True
         },
         'volatility_model': {
-            'type': 'arch',
+            'type': 'LSTM',
             'constant': True,
             'params': None,
-            'ar_lags': 3,
+            'ar_lags': 6,
             'ma_lags': 5,
             'layers': [10, 1],
             'activation': 'sigmoid',
             'dropout': True
         },
         'stock_model': {
-            'n_iteration': 1
+            'n_iteration': 10
         }
     }
     #
@@ -1443,16 +1445,16 @@ if __name__ == '__main__':
     #                 attribute_to_change='ar_lags',
     #                 value_list=range(1, 11),
     #                 write_path='grid_search_gru_p_gru_5.xlsx')
-
-    import os
-    files = os.listdir('models_comparision')
-    files = [file for file in files if 'metrics' in file]
-    test_dict = dict()
-    for i, file in enumerate(files):
-        path = 'models_comparision/'+file
-        f = open(path, 'r')
-        test_dict[i] = eval(f.read())
-        f.close()
-        test_dict[i]['model'] = file[:-12]
+    #
+    # import os
+    # files = os.listdir('models_comparision')
+    # files = [file for file in files if 'metrics' in file]
+    # test_dict = dict()
+    # for i, file in enumerate(files):
+    #     path = 'models_comparision/'+file
+    #     f = open(path, 'r')
+    #     test_dict[i] = eval(f.read())
+    #     f.close()
+    #     test_dict[i]['model'] = file[:-12]
 
 
